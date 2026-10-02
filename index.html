@@ -1,0 +1,442 @@
+// ==================== ARRAYS BARU ====================
+let boomerangShields = [];
+let skyLasers = [];
+let missiles = [];
+let waterMinions = [];
+let sharkBites = [];
+let lightSpearRains = [];
+let energyBalls = [];
+let staffLasers = [];
+let throwMjolnir = null;
+
+// ==================== TRIGGER ATTACKS ====================
+function triggerNormalAttack() {
+    if (!player || gameState !== 'PLAYING') return;
+    const w = selectedWeapon.id;
+    const f = player.facing;
+
+    // ---------- KNIGHT TOOLS ----------
+    if (w === 'SWORD') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = player.knightMode === 'SWORD' ? 380 : 280;
+        const target = getClosestEnemy();
+        const baseDmg = player.knightMode === 'SWORD' ? 75 : 55;
+
+        // increment counter
+        player.hitCounter5++;
+        player.hitCounter15++;
+
+        // animasi & damage
+        if (target) {
+            const side = target.x >= player.x ? 1 : -1;
+            // lunge kecil untuk spear, slash untuk great sword
+            if (player.knightMode === 'SPEAR') {
+                player.x = Math.max(30, Math.min(canvas.width - 30, target.x - side * 55));
+            } else {
+                player.x += side * 25;
+            }
+            player.facing = side;
+            target.takeDamage(baseDmg, true);
+            player.invincibleTimer = player.knightMode === 'SPEAR' ? 320 : 200;
+
+            // FX slash/spear
+            const col = player.knightMode === 'SWORD' ? '#a855f7' : '#38bdf8';
+            addFx(300, (c, p) => {
+                c.globalAlpha = 1 - p;
+                c.strokeStyle = col;
+                c.shadowColor = col;
+                c.shadowBlur = 20;
+                c.lineCap = 'round';
+                c.lineWidth = 6 * (1 - p) + 2;
+                c.beginPath();
+                if (player.knightMode === 'SWORD') {
+                    c.arc(target.x, target.y, 30 + p * 40, -1.2, 1.2);
+                } else {
+                    c.moveTo(player.x, player.y);
+                    c.lineTo(target.x, target.y);
+                }
+                c.stroke();
+            });
+            sfx.slash();
+            triggerScreenShake(5);
+        } else {
+            // miss swing
+            addFx(200, (c, p) => {
+                c.globalAlpha = 1 - p;
+                c.strokeStyle = '#a855f7';
+                c.lineWidth = 4;
+                c.beginPath();
+                c.arc(player.x + f * 30, player.y - 5, 30 + p * 20, f > 0 ? -1 : 1, f > 0 ? 2 : 4);
+                c.stroke();
+            });
+            sfx.slash();
+        }
+
+        // cek counter 15 (laser) — prioritas
+        if (player.hitCounter15 >= 15) {
+            player.hitCounter15 = 0;
+            const t = getClosestEnemy();
+            if (t) fireShieldLaser(t);
+        }
+        // cek counter 5 (boomerang shield)
+        else if (player.hitCounter5 >= 5) {
+            player.hitCounter5 = 0;
+            throwBoomerangShield();
+        }
+        return;
+    }
+
+    // ---------- MJÖLNIR ----------
+    if (w === 'MJOLNIR') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 420;
+        const target = getClosestEnemy();
+        if (target) {
+            const side = target.x >= player.x ? 1 : -1;
+            player.x = Math.max(30, Math.min(canvas.width - 30, target.x - side * 65));
+            player.facing = side;
+            player.invincibleTimer = 250;
+            target.takeDamage(90, true);
+            stunE(target, 400);
+            // FX hammer smash
+            addFx(350, (c, p) => {
+                c.globalAlpha = 1 - p;
+                c.fillStyle = '#facc15';
+                c.shadowColor = '#facc15';
+                c.shadowBlur = 26;
+                c.beginPath();
+                c.arc(target.x, target.y, 20 + p * 55, 0, 7);
+                c.fill();
+                c.strokeStyle = '#fff';
+                c.lineWidth = 3;
+                c.beginPath();
+                c.arc(target.x, target.y, 20 + p * 55, 0, 7);
+                c.stroke();
+            });
+            for (let i = 0; i < 12; i++) {
+                particles.push(new Particle(target.x, target.y, i % 2 ? '#fde047' : '#fff', 5));
+            }
+            sfx.thunder();
+            triggerScreenShake(9);
+        } else {
+            sfx.slash();
+        }
+        return;
+    }
+
+    // ---------- ATLANTIS TRIDENT ----------
+    if (w === 'TRIDENT') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 400;
+        const target = getClosestEnemy();
+        const hitX = target ? target.x : player.x + f * 70;
+        // damage area + wave visual
+        enemies.forEach(e => {
+            if (Math.abs(e.x - hitX) < 75) {
+                e.takeDamage(60, true);
+            }
+        });
+        // gelombang ombak
+        const wave = new Projectile(player.x + f * 30, groundY - 40, f * 10, 0, 60, '#22d3ee', 46, 'WAVE');
+        wave.pierce = true;
+        wave.life = 1000;
+        wave.onHit = e => {
+            drownFields.push(new DrownField(e.x, groundY, 75, 2500));
+        };
+        projectiles.push(wave);
+        splash(player.x + f * 30);
+        sfx.slash();
+        return;
+    }
+
+    // ---------- AK-47 ----------
+    if (w === 'AK47') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 60; // cepat, membabi buta
+        // spray: arah utama + spread acak
+        const baseAngle = f > 0 ? 0 : Math.PI;
+        const spread = (Math.random() - 0.5) * 0.5; // ±0.25 rad
+        const angle = baseAngle + spread;
+        const speed = 20;
+        const p = new Projectile(
+            player.x + f * 28, player.y - 2 + (Math.random() - .5) * 10,
+            Math.cos(angle) * speed, Math.sin(angle) * speed,
+            18, '#fbbf24', 4, 'BULLET'
+        );
+        projectiles.push(p);
+        player.recoil = 10;
+        player.x -= f * 2.5;
+        muzzle(player.x + f * 30, player.y - 2, f, '#fde68a');
+        triggerScreenShake(3);
+        sfx.shoot();
+        return;
+    }
+
+    // ---------- MAGIC STAFF ----------
+    if (w === 'STAFF') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 130; // beruntun
+        const target = getClosestEnemy();
+        let angle;
+        if (target) {
+            angle = Math.atan2(target.y - (player.y - 6), target.x - (player.x + f * 24));
+        } else {
+            angle = f > 0 ? 0 : Math.PI;
+        }
+        staffLasers.push(new StaffLaser(player.x + f * 24, player.y - 6, angle, 22));
+        // recoil visual
+        player.recoil = 5;
+        player.x -= f * 1;
+        muzzle(player.x + f * 26, player.y - 6, f, '#7dd3fc');
+        sfx.magic();
+        return;
+    }
+}
+
+function triggerSpecialAttack() {
+    if (!player || gameState !== 'PLAYING') return;
+    const w = selectedWeapon.id;
+    const f = player.facing;
+
+    // ---------- KNIGHT TOOLS: SHIELD BLOCK ----------
+    if (w === 'SWORD') {
+        if (player.shieldCooldown > 0 || player.shieldBlocking) return;
+        player.shieldBlocking = true;
+        player.shieldBlockTimer = 1000;
+        player.invincibleTimer = 1000;
+        player.shieldCooldown = 3000;
+        spawnFloatingText(player.x, player.y - 40, '🛡 BLOCK!', '#a855f7', 20);
+        sfx.hit();
+        return;
+    }
+
+    // ---------- MJÖLNIR: 3 BOLTS ----------
+    if (w === 'MJOLNIR') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 1200;
+        const target = getClosestEnemy();
+        const cx = target ? target.x : player.x + f * 200;
+        const cy = target ? target.y : groundY;
+        for (let i = 0; i < 3; i++) {
+            later(i * 160, () => {
+                bolt(cx + (Math.random() - .5) * 60, cy, 85, 900);
+            });
+        }
+        sfx.thunder();
+        return;
+    }
+
+    // ---------- ATLANTIS TRIDENT: SHARK PACK ----------
+    if (w === 'TRIDENT') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 900;
+        const count = 1 + Math.floor(player.level / 10);
+        const target = getClosestEnemy();
+        if (!target) { sfx.slash(); return; }
+        for (let i = 0; i < count; i++) {
+            later(i * 120, () => {
+                const t = getClosestEnemy();
+                if (!t) return;
+                const sx = player.x + f * 20 + (Math.random() - .5) * 40;
+                const sy = player.y + (Math.random() - .5) * 40;
+                sharkBites.push(new SharkBite(sx, sy, t, 90));
+            });
+        }
+        spawnFloatingText(player.x - 30, player.y - 45, `🦈 ×${count}`, '#22d3ee', 20);
+        sfx.slash();
+        return;
+    }
+
+    // ---------- AK-47: 3 BALLISTIC MISSILES ----------
+    if (w === 'AK47') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 1000;
+        for (let i = 0; i < 3; i++) {
+            later(i * 100, () => {
+                const t = getClosestEnemy();
+                if (!t) return;
+                missiles.push(new Missile(player.x + f * 20, player.y - 10, t, 70, '#f97316'));
+            });
+        }
+        triggerScreenShake(4);
+        sfx.shoot();
+        return;
+    }
+
+    // ---------- MAGIC STAFF: ENERGY BALL ----------
+    if (w === 'STAFF') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 550;
+        const t = getClosestEnemy();
+        energyBalls.push(new EnergyBall(player.x + f * 24, player.y - 6, t, 100, '#38bdf8'));
+        muzzle(player.x + f * 26, player.y - 6, f, '#7dd3fc');
+        sfx.magic();
+        return;
+    }
+}
+
+function triggerComboAttack() {
+    if (!player || gameState !== 'PLAYING') return;
+    const w = selectedWeapon.id;
+    const f = player.facing;
+
+    // ---------- KNIGHT TOOLS: SWAP WEAPON ----------
+    if (w === 'SWORD') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 300;
+        player.knightMode = player.knightMode === 'SWORD' ? 'SPEAR' : 'SWORD';
+        const label = player.knightMode === 'SWORD' ? '⚔ GREAT SWORD' : '🔱 SPEAR';
+        spawnFloatingText(player.x - 40, player.y - 50, label, '#c084fc', 22);
+        addFx(400, (c, p) => {
+            c.globalAlpha = 1 - p;
+            c.strokeStyle = '#c084fc';
+            c.lineWidth = 4;
+            c.beginPath();
+            c.arc(player.x, player.y, 20 + p * 70, 0, 7);
+            c.stroke();
+        });
+        sfx.teleport();
+        updateHudWeaponGauge();
+        return;
+    }
+
+    // ---------- MJÖLNIR: THROW + 15 BOLTS ----------
+    if (w === 'MJOLNIR') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 4000;
+        const target = getClosestEnemy();
+        if (!target) { sfx.thunder(); return; }
+        player.invincibleTimer = 800;
+        spawnFloatingText(player.x - 60, player.y - 50, '⚡ MJÖLNIR THROW!', '#facc15', 24);
+        triggerScreenShake(10);
+        sfx.thunder();
+
+        // lepas mjolnir visual: hammer projectile dummy
+        const hammerX = target.x, hammerY = target.y;
+        addFx(400, (c, p) => {
+            c.globalAlpha = 1 - p;
+            c.fillStyle = '#facc15';
+            c.shadowColor = '#facc15';
+            c.shadowBlur = 30;
+            c.beginPath();
+            c.arc(player.x, player.y, 15 + p * 40, 0, 7);
+            c.fill();
+            c.beginPath();
+            c.arc(hammerX, hammerY, 15 + p * 40, 0, 7);
+            c.fill();
+        });
+
+        // 15 petir beruntun
+        for (let i = 0; i < 15; i++) {
+            later(i * 80, () => {
+                const t = getClosestEnemy();
+                const tx = t ? t.x + (Math.random() - .5) * 40 : hammerX + (Math.random() - .5) * 80;
+                const ty = t ? t.y : hammerY;
+                bolt(tx, ty, 60, 300);
+            });
+        }
+        return;
+    }
+
+    // ---------- ATLANTIS TRIDENT: 2 WATER MINIONS ----------
+    if (w === 'TRIDENT') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 3500;
+        const size = 16 + Math.floor(player.level / 10) * 4;
+        const dmg = 30 + Math.floor(player.level / 10) * 12;
+        for (let i = 0; i < 2; i++) {
+            later(i * 200, () => {
+                const mx = player.x + (i === 0 ? -50 : 50);
+                const my = player.y - 20;
+                waterMinions.push(new WaterMinion(mx, my, dmg, size));
+                addFx(500, (c, p) => {
+                    c.globalAlpha = 1 - p;
+                    c.strokeStyle = '#22d3ee';
+                    c.shadowColor = '#22d3ee';
+                    c.shadowBlur = 24;
+                    c.lineWidth = 5;
+                    c.beginPath();
+                    c.arc(mx, my, 20 + p * 80, 0, 7);
+                    c.stroke();
+                });
+            });
+        }
+        spawnFloatingText(player.x - 50, player.y - 50, '🌊 MINIONS!', '#22d3ee', 22);
+        sfx.magic();
+        return;
+    }
+
+    // ---------- AK-47: SKY LASER x3 ----------
+    if (w === 'AK47') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 3500;
+        const t = getClosestEnemy();
+        const cx = t ? t.x : player.x + f * 200;
+        spawnFloatingText(player.x - 40, player.y - 50, '☄ SKY LASER!', '#f97316', 24);
+        for (let i = 0; i < 3; i++) {
+            later(i * 400, () => {
+                const tx = Math.max(60, Math.min(canvas.width - 60, cx + (Math.random() - .5) * 400));
+                skyLasers.push(new SkyLaser(tx, 600, 200, '#f97316'));
+            });
+        }
+        sfx.thunder();
+        return;
+    }
+
+    // ---------- MAGIC STAFF: LIGHT SPEAR RAIN ----------
+    if (w === 'STAFF') {
+        if (player.attackCooldown > 0) return;
+        player.attackCooldown = 3000;
+        const t = getClosestEnemy();
+        if (!t) { sfx.magic(); return; }
+        spawnFloatingText(player.x - 60, player.y - 50, '✨ SPEAR RAIN!', '#7dd3fc', 24);
+        const n = 8;
+        for (let i = 0; i < n; i++) {
+            const angle = (i / n) * Math.PI * 2;
+            later(i * 100, () => {
+                const tt = getClosestEnemy();
+                if (!tt) return;
+                lightSpearRains.push(new LightSpearRain(tt, 70, 0, angle, '#7dd3fc'));
+                sfx.magic();
+            });
+        }
+        return;
+    }
+}
+
+// ==================== HELPER FUNCTIONS ====================
+function throwBoomerangShield() {
+    const t = getClosestEnemy();
+    const dir = t ? Math.sign(t.x - player.x) : player.facing;
+    boomerangShields.push(new BoomerangShield(player.x, player.y - 5, dir * 13, 120));
+    spawnFloatingText(player.x - 30, player.y - 45, '🛡 SHIELD THROW!', '#a855f7', 18);
+    sfx.teleport();
+}
+
+function fireShieldLaser(target) {
+    spawnFloatingText(player.x - 50, player.y - 55, '⚡ SHIELD LASER!', '#a855f7', 22);
+    // beam dari player ke target
+    addFx(500, (c, p) => {
+        c.globalAlpha = 1 - p;
+        c.strokeStyle = '#a855f7';
+        c.shadowColor = '#a855f7';
+        c.shadowBlur = 30;
+        c.lineWidth = 20 * (1 - p) + 3;
+        c.lineCap = 'round';
+        c.beginPath();
+        c.moveTo(player.x, player.y - 5);
+        c.lineTo(target.x, target.y);
+        c.stroke();
+        c.strokeStyle = '#fff';
+        c.lineWidth = 6 * (1 - p);
+        c.stroke();
+    });
+    target.takeDamage(220, true);
+    stunE(target, 800);
+    triggerScreenShake(14);
+    sfx.thunder();
+    // splash
+    for (let i = 0; i < 20; i++) {
+        particles.push(new Particle(target.x, target.y, i % 2 ? '#a855f7' : '#fff', 5));
+    }
+}
